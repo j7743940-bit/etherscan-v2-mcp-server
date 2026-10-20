@@ -60,6 +60,37 @@ class EtherscanV2MCPServer {
     this.fastify.get("/health", async () => ({ status: "ok", service: "etherscan-v2-mcp-server", timestamp: new Date().toISOString(), version: "1.0.0" }));
     this.fastify.get("/api/tools", async () => ({ tools }));
     this.fastify.all("/mcp", async (request: any, reply: any) => {
+    
+      // Protect the MCP endpoint using a separate access token.
+      const expectedToken = process.env.MCP_ACCESS_TOKEN;
+
+      if (!expectedToken) {
+        return reply.code(503).send({
+          error: "MCP access token is not configured"
+        });
+      }
+
+      const auth = request.headers.authorization;
+      const suppliedToken =
+        typeof auth === "string" && auth.startsWith("Bearer ")
+          ? auth.slice(7)
+          : "";
+
+      const { timingSafeEqual } = await import("node:crypto");
+      const supplied = Buffer.from(suppliedToken);
+      const expected = Buffer.from(expectedToken);
+
+      if (
+        supplied.length !== expected.length ||
+        !timingSafeEqual(supplied, expected)
+      ) {
+        reply.header("WWW-Authenticate", 'Bearer realm="etherscan-mcp"');
+        return reply.code(401).send({
+          error: "Unauthorized"
+        });
+      }
+
+
       try {
         const sessionIdHeader = request.headers["mcp-session-id"] as string | undefined;
         let transport: StreamableHTTPServerTransport | undefined;
