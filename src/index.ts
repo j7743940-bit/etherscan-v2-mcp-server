@@ -89,48 +89,74 @@ class EtherscanV2MCPServer {
           error: "Unauthorized"
         });
       }
-
-
       try {
-        const sessionIdHeader = request.headers["mcp-session-id"] as string | undefined;
-        let transport: StreamableHTTPServerTransport | undefined;
-        if (sessionIdHeader && this.transports[sessionIdHeader]) {
-          transport = this.transports[sessionIdHeader];
-        } else if (!sessionIdHeader && request.method === "POST") {
-          transport = new StreamableHTTPServerTransport({
-            sessionIdGenerator: () => randomUUID(),
-            onsessioninitialized: (sid: string) => {
-              this.transports[sid] = transport!;
-              transport!.onclose = () => { if (sid) delete this.transports[sid]; };
-            },
+        if (request.method !== "POST") {
+          return reply.code(405).send({
+            error: "Method Not Allowed",
           });
-          const sessionServer = new Server({ name: "etherscan-v2-mcp", version: "1.0.0" }, { capabilities: { tools: {}, resources: {}, prompts: {} } });
-          sessionServer.setRequestHandler(ListToolsRequestSchema, async () => ({ tools }));
-          sessionServer.setRequestHandler(CallToolRequestSchema, async (req) => {
+        }
+
+        const transport = new StreamableHTTPServerTransport({
+          sessionIdGenerator: undefined,
+          enableJsonResponse: true,
+        });
+
+        const sessionServer = new Server(
+          { name: "etherscan-v2-mcp", version: "1.0.0" },
+          { capabilities: { tools: {} } }
+        );
+
+        sessionServer.setRequestHandler(
+          ListToolsRequestSchema,
+          async () => ({ tools })
+        );
+
+        sessionServer.setRequestHandler(
+          CallToolRequestSchema,
+          async (req) => {
             const { name, arguments: args } = req.params;
             try {
               const result = await handleToolCall(name, args);
-              return { content: [{ type: "text", text: JSON.stringify(result) }] };
+              return {
+                content: [{
+                  type: "text",
+                  text: JSON.stringify(result),
+                }],
+              };
             } catch (error) {
-              const message = error instanceof Error ? error.message : String(error);
-              return { content: [{ type: "text", text: `Error: ${message}` }], isError: true };
+              const message = error instanceof Error
+                ? error.message
+                : String(error);
+              return {
+                content: [{
+                  type: "text",
+                  text: `Error: ${message}`,
+                }],
+                isError: true,
+              };
             }
-          });
-          await sessionServer.connect(transport);
-        } else if (request.method === "GET" && !sessionIdHeader) {
-          reply.status(405).send({ jsonrpc: "2.0", error: { code: -32000, message: "Method Not Allowed: initialize the session with POST first." }, id: null });
-          return;
-        } else {
-          reply.status(400).send({ jsonrpc: "2.0", error: { code: -32000, message: "Bad Request: No valid session ID provided" }, id: null });
-          return;
-        }
+          }
+        );
+
+        await sessionServer.connect(transport);
+
         reply.hijack();
-        await transport.handleRequest(request.raw, reply.raw, request.body);
+        await transport.handleRequest(
+          request.raw,
+          reply.raw,
+          request.body
+        );
       } catch (error) {
-        try {
-          reply.raw.writeHead(500, { "Content-Type": "application/json" });
-          reply.raw.end(JSON.stringify({ error: "Failed to handle MCP request" }));
-        } catch {}
+        if (!reply.raw.headersSent) {
+          reply.raw.writeHead(500, {
+            "Content-Type": "application/json",
+          });
+        }
+        if (!reply.raw.writableEnded) {
+          reply.raw.end(JSON.stringify({
+            error: "Failed to handle MCP request",
+          }));
+        }
       }
     });
   }
