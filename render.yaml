@@ -1,0 +1,23 @@
+services:
+  - type: web
+    name: etherscan-v2-rwa-mcp
+    runtime: node
+    plan: free
+
+    buildCommand: npm ci && npm run build
+    startCommand: npm start
+
+    healthCheckPath: /health
+
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+
+      - key: NODE_ENV
+        value: production
+
+      - key: ETHERSCAN_API_KEY
+        sync: false
+
+      - key: MCP_ACCESS_TOKEN
+        generateValue: true
